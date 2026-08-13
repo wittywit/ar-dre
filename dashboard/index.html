@@ -159,9 +159,68 @@
     font-family: 'Courier New', monospace;
     font-size: 0.85em;
   }
+
+  #universe-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 999999;
+    background: #000;
+    display: none;
+    overflow: hidden;
+  }
+
+  #universe-overlay.active {
+    display: block;
+  }
+
+  #universe-overlay pre {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 0;
+    font-family: 'Courier New', monospace;
+    line-height: 1;
+    white-space: pre;
+    text-align: center;
+  }
+
+  #universe-overlay.ice pre { color: #4fb3ff; text-shadow: 0 0 6px #1a6fb0; }
+  #universe-overlay.fire pre { color: #ff5a3c; text-shadow: 0 0 6px #b02a10; }
+  #universe-overlay.tie pre { color: #cccccc; text-shadow: 0 0 6px #666666; }
+
+  #universe-overlay .caption {
+    position: absolute;
+    bottom: 40px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: inherit;
+  }
+
+  #universe-overlay .close {
+    position: absolute;
+    top: 20px;
+    right: 24px;
+    background: none;
+    border: 1px solid currentColor;
+    color: inherit;
+    font-family: 'Courier New', monospace;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
+
+<div id="universe-overlay">
+  <pre id="universe-ascii"></pre>
+  <div class="caption" id="universe-caption"></div>
+  <button class="close" id="universe-close">close</button>
+</div>
 
 <h1>Live Score Dashboard</h1>
 <p class="subtitle">real-time score comparison &middot; QUANTUM1 AR experience</p>
@@ -453,6 +512,94 @@
   }
 
   // ----------------------------------------------
+  // UNIVERSE REVEAL (fullscreen ASCII animation)
+  // ----------------------------------------------
+
+  const universeOverlay = document.getElementById('universe-overlay')
+  const universeAscii = document.getElementById('universe-ascii')
+  const universeCaption = document.getElementById('universe-caption')
+  const universeClose = document.getElementById('universe-close')
+
+  const CHARS = ' .:-=+*#%@'
+  let universeAnimId = null
+
+  const sizeUniverseFont = (cols) => {
+    const fontSize = Math.max(4, window.innerWidth / (cols * 0.62))
+    universeAscii.style.fontSize = `${fontSize}px`
+  }
+
+  const startUniverse = (winner) => {
+    universeOverlay.classList.remove('ice', 'fire', 'tie')
+    universeOverlay.classList.add(winner)
+    universeOverlay.classList.add('active')
+
+    universeCaption.textContent =
+      winner === 'tie'
+        ? 'a universe in perfect balance'
+        : `the ${winner} universe awakens`
+
+    const cols = 110
+    const rows = 50
+    sizeUniverseFont(cols)
+
+    const cx = cols / 2
+    const cy = rows / 2
+    const maxR = Math.sqrt(cx * cx + cy * cy)
+    const startTime = performance.now()
+    const growDuration = 5000
+
+    const frame = (now) => {
+      const elapsed = now - startTime
+      const t = Math.min(1, elapsed / growDuration)
+      const radius = t * maxR * 1.2
+
+      let out = ''
+      for (let y = 0; y < rows; y++) {
+        let line = ''
+        for (let x = 0; x < cols; x++) {
+          const dx = x - cx
+          const dy = (y - cy) * 2.15
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          const edge = dist - radius
+
+          let ch = ' '
+
+          if (edge < 0) {
+            const noise =
+              Math.sin(dist * 0.5 + now * 0.0016) *
+              Math.cos(x * 0.28 - now * 0.001 + y * 0.22)
+            const intensity =
+              Math.max(0, Math.min(1, (1 - dist / maxR) + noise * 0.35))
+            ch = CHARS[Math.floor(intensity * (CHARS.length - 1))]
+          } else if (edge < 1.6) {
+            ch = Math.random() < 0.55 ? CHARS[CHARS.length - 1] : CHARS[CHARS.length - 2]
+          }
+
+          line += ch
+        }
+        out += line + '\n'
+      }
+
+      universeAscii.textContent = out
+
+      universeAnimId = requestAnimationFrame(frame)
+    }
+
+    universeAnimId = requestAnimationFrame(frame)
+  }
+
+  const stopUniverse = () => {
+    if (universeAnimId) cancelAnimationFrame(universeAnimId)
+    universeAnimId = null
+    universeOverlay.classList.remove('active')
+  }
+
+  universeClose.addEventListener('click', stopUniverse)
+  window.addEventListener('resize', () => {
+    if (universeOverlay.classList.contains('active')) sizeUniverseFont(110)
+  })
+
+  // ----------------------------------------------
   // WEBSOCKET
   // ----------------------------------------------
 
@@ -509,6 +656,7 @@
       try {
         const msg = JSON.parse(event.data)
         if (msg.type === 'state') handleState(msg)
+        if (msg.type === 'universe') startUniverse(msg.winner)
       } catch (e) {
         console.error('bad message', e)
       }
