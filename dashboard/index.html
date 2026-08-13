@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Score Dashboard</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #000000;
+    --muted: #555555;
+    --border: #000000;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+
+  body {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+
+  h1 {
+    font-size: 1.6em;
+    margin: 0 0 4px;
+  }
+
+  .subtitle {
+    color: var(--muted);
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+    margin: 0 0 28px;
+  }
+
+  .panel {
+    border: 1px solid var(--border);
+    padding: 16px 18px;
+    margin-bottom: 24px;
+  }
+
+  .panel h2 {
+    font-size: 1em;
+    font-family: 'Courier New', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 14px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+
+  label {
+    display: block;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8em;
+    margin-bottom: 4px;
+    color: var(--muted);
+  }
+
+  input[type="text"] {
+    width: 100%;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  .row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .row > div {
+    flex: 1 1 200px;
+  }
+
+  button {
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    background: var(--ink);
+    color: var(--bg);
+    cursor: pointer;
+    margin-top: 14px;
+  }
+
+  button:hover {
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  #status {
+    font-family: 'Courier New', monospace;
+    font-size: 0.8em;
+    margin-top: 10px;
+    color: var(--muted);
+  }
+
+  #status.connected { color: var(--ink); }
+
+  .chart-wrap {
+    overflow-x: auto;
+  }
+
+  svg text {
+    font-family: 'Courier New', monospace;
+  }
+
+  .legend {
+    display: flex;
+    gap: 20px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8em;
+    margin-top: 10px;
+  }
+
+  .legend .swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 1px solid var(--border);
+    margin-right: 6px;
+    vertical-align: -2px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+  }
+
+  th, td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: left;
+  }
+
+  th {
+    font-weight: normal;
+    text-transform: uppercase;
+    font-size: 0.8em;
+    letter-spacing: 0.03em;
+  }
+
+  .empty {
+    color: var(--muted);
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+  }
+</style>
+</head>
+<body>
+
+<h1>Live Score Dashboard</h1>
+<p class="subtitle">real-time score comparison &middot; QUANTUM1 AR experience</p>
+
+<div class="panel">
+  <h2>Connection</h2>
+  <div class="row">
+    <div>
+      <label for="relay-url">Relay URL (wss://...)</label>
+      <input type="text" id="relay-url" placeholder="wss://score-relay.pkch101.workers.dev">
+    </div>
+    <div>
+      <label for="room-code">Room code</label>
+      <input type="text" id="room-code" value="quantum1">
+    </div>
+  </div>
+  <button id="connect-btn">Connect</button>
+  <div id="status">not connected</div>
+</div>
+
+<div class="panel">
+  <h2>Scores</h2>
+  <div class="chart-wrap">
+    <svg id="bar-chart" width="720" height="160"></svg>
+  </div>
+  <div class="legend">
+    <span><span class="swatch" id="swatch-ice"></span>ice</span>
+    <span><span class="swatch" id="swatch-fire"></span>fire</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Total over time</h2>
+  <div class="chart-wrap">
+    <svg id="line-chart" width="720" height="220"></svg>
+  </div>
+  <div class="legend" id="line-legend"></div>
+</div>
+
+<div class="panel">
+  <h2>Raw state</h2>
+  <div id="table-wrap"><p class="empty">waiting for data&hellip;</p></div>
+</div>
+
+<script>
+(() => {
+  const relayInput = document.getElementById('relay-url')
+  const roomInput = document.getElementById('room-code')
+  const connectBtn = document.getElementById('connect-btn')
+  const statusEl = document.getElementById('status')
+
+  const params = new URLSearchParams(window.location.search)
+
+  const DEFAULT_RELAY_URL = 'wss://score-relay.pkch101.workers.dev'
+
+  relayInput.value =
+    params.get('relay') ||
+    localStorage.getItem('dashboard-relay-url') ||
+    DEFAULT_RELAY_URL
+
+  roomInput.value =
+    params.get('room') ||
+    localStorage.getItem('dashboard-room') ||
+    'quantum1'
+
+  // ICE pattern: diagonal lines one way. FIRE pattern: diagonal lines the other way.
+  const svgNS = 'http://www.w3.org/2000/svg'
+
+  const ensurePatterns = (svg) => {
+    const defs = document.createElementNS(svgNS, 'defs')
+
+    const makePattern = (id, angle) => {
+      const pattern = document.createElementNS(svgNS, 'pattern')
+      pattern.setAttribute('id', id)
+      pattern.setAttribute('width', '6')
+      pattern.setAttribute('height', '6')
+      pattern.setAttribute('patternTransform', `rotate(${angle})`)
+      pattern.setAttribute('patternUnits', 'userSpaceOnUse')
+
+      const bg = document.createElementNS(svgNS, 'rect')
+      bg.setAttribute('width', '6')
+      bg.setAttribute('height', '6')
+      bg.setAttribute('fill', '#ffffff')
+      pattern.appendChild(bg)
+
+      const line = document.createElementNS(svgNS, 'line')
+      line.setAttribute('x1', '0')
+      line.setAttribute('y1', '0')
+      line.setAttribute('x2', '0')
+      line.setAttribute('y2', '6')
+      line.setAttribute('stroke', '#000000')
+      line.setAttribute('stroke-width', '2')
+      pattern.appendChild(line)
+
+      defs.appendChild(pattern)
+    }
+
+    makePattern('pattern-ice', 45)
+    makePattern('pattern-fire', -45)
+
+    svg.appendChild(defs)
+  }
+
+  const barSvg = document.getElementById('bar-chart')
+  ensurePatterns(barSvg)
+  document.getElementById('swatch-ice').style.background =
+    'repeating-linear-gradient(45deg, #000 0, #000 1px, #fff 1px, #fff 4px)'
+  document.getElementById('swatch-fire').style.background =
+    'repeating-linear-gradient(-45deg, #000 0, #000 1px, #fff 1px, #fff 4px)'
+
+  const el = (tag, attrs, parent) => {
+    const node = document.createElementNS(svgNS, tag)
+    Object.entries(attrs || {}).forEach(([k, v]) => node.setAttribute(k, v))
+    if (parent) parent.appendChild(node)
+    return node
+  }
+
+  // ----------------------------------------------
+  // BAR CHART: one row per player, ice+fire stacked
+  // ----------------------------------------------
+
+  const renderBarChart = (players) => {
+    while (barSvg.lastChild && barSvg.lastChild.tagName !== 'defs') {
+      barSvg.removeChild(barSvg.lastChild)
+    }
+
+    const width = 720
+    const rowHeight = 44
+    const height = Math.max(160, players.length * rowHeight + 20)
+    barSvg.setAttribute('height', height)
+    barSvg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+
+    if (players.length === 0) {
+      el('text', {x: 10, y: 30, fill: '#555'}, barSvg).textContent = 'no players yet'
+      return
+    }
+
+    const maxTotal = Math.max(1, ...players.map(p => p.total))
+    const chartLeft = 110
+    const chartRight = width - 60
+    const chartWidth = chartRight - chartLeft
+    const barHeight = 22
+
+    players.forEach((p, i) => {
+      const y = 16 + i * rowHeight
+
+      el('text', {
+        x: chartLeft - 12,
+        y: y + barHeight / 2 + 4,
+        fill: '#000',
+        'text-anchor': 'end',
+        'font-size': '13',
+      }, barSvg).textContent = p.name
+
+      const iceW = (p.ice / maxTotal) * chartWidth
+      const fireW = (p.fire / maxTotal) * chartWidth
+
+      el('rect', {
+        x: chartLeft, y, width: chartWidth, height: barHeight,
+        fill: 'none', stroke: '#000', 'stroke-width': 1,
+      }, barSvg)
+
+      el('rect', {
+        x: chartLeft, y, width: iceW, height: barHeight,
+        fill: 'url(#pattern-ice)', stroke: '#000', 'stroke-width': 1,
+      }, barSvg)
+
+      el('rect', {
+        x: chartLeft + iceW, y, width: fireW, height: barHeight,
+        fill: 'url(#pattern-fire)', stroke: '#000', 'stroke-width': 1,
+      }, barSvg)
+
+      el('text', {
+        x: chartLeft + chartWidth + 8,
+        y: y + barHeight / 2 + 4,
+        fill: '#000',
+        'font-size': '13',
+      }, barSvg).textContent = p.total
+    })
+  }
+
+  // ----------------------------------------------
+  // LINE CHART: total score history per player
+  // ----------------------------------------------
+
+  const history = new Map() // name -> [{t, total}]
+  const dashStyles = ['none', '6,4', '2,3', '10,3,2,3']
+
+  const lineSvg = document.getElementById('line-chart')
+  const lineLegend = document.getElementById('line-legend')
+
+  const renderLineChart = (players) => {
+    while (lineSvg.firstChild) lineSvg.removeChild(lineSvg.firstChild)
+    lineLegend.innerHTML = ''
+
+    const width = 720
+    const height = 220
+    lineSvg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+
+    const padLeft = 40
+    const padRight = 20
+    const padTop = 16
+    const padBottom = 28
+    const plotW = width - padLeft - padRight
+    const plotH = height - padTop - padBottom
+
+    const allPoints = [...history.values()].flat()
+    if (allPoints.length === 0) {
+      el('text', {x: 10, y: 30, fill: '#555'}, lineSvg).textContent = 'no data yet'
+      return
+    }
+
+    const minT = Math.min(...allPoints.map(p => p.t))
+    const maxT = Math.max(...allPoints.map(p => p.t), minT + 1)
+    const maxTotal = Math.max(1, ...allPoints.map(p => p.total))
+
+    // axes
+    el('line', {x1: padLeft, y1: padTop, x2: padLeft, y2: padTop + plotH, stroke: '#000'}, lineSvg)
+    el('line', {x1: padLeft, y1: padTop + plotH, x2: padLeft + plotW, y2: padTop + plotH, stroke: '#000'}, lineSvg)
+    el('text', {x: 4, y: padTop + 6, fill: '#555', 'font-size': '11'}, lineSvg).textContent = maxTotal
+    el('text', {x: 4, y: padTop + plotH + 4, fill: '#555', 'font-size': '11'}, lineSvg).textContent = '0'
+
+    const names = [...history.keys()]
+
+    names.forEach((name, i) => {
+      const points = history.get(name)
+      if (points.length === 0) return
+
+      const path = points.map((p, idx) => {
+        const x = padLeft + ((p.t - minT) / (maxT - minT || 1)) * plotW
+        const y = padTop + plotH - (p.total / maxTotal) * plotH
+        return `${idx === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
+      }).join(' ')
+
+      el('path', {
+        d: path,
+        fill: 'none',
+        stroke: '#000',
+        'stroke-width': 2,
+        'stroke-dasharray': dashStyles[i % dashStyles.length],
+      }, lineSvg)
+
+      const last = points[points.length - 1]
+      const lx = padLeft + ((last.t - minT) / (maxT - minT || 1)) * plotW
+      const ly = padTop + plotH - (last.total / maxTotal) * plotH
+      el('circle', {cx: lx, cy: ly, r: 3, fill: '#000'}, lineSvg)
+      el('text', {
+        x: Math.min(lx + 6, width - 10), y: ly + 4, fill: '#000', 'font-size': '12',
+      }, lineSvg).textContent = name
+
+      const legendItem = document.createElement('span')
+      legendItem.innerHTML =
+        `<svg width="20" height="10" style="vertical-align:-1px"><line x1="0" y1="5" x2="20" y2="5" ` +
+        `stroke="#000" stroke-width="2" stroke-dasharray="${dashStyles[i % dashStyles.length]}"/></svg> ${name}`
+      lineLegend.appendChild(legendItem)
+    })
+  }
+
+  // ----------------------------------------------
+  // TABLE
+  // ----------------------------------------------
+
+  const renderTable = (players) => {
+    const wrap = document.getElementById('table-wrap')
+
+    if (players.length === 0) {
+      wrap.innerHTML = '<p class="empty">waiting for data&hellip;</p>'
+      return
+    }
+
+    const rows = players.map(p => `
+      <tr>
+        <td>${p.name}</td>
+        <td>${p.ice}</td>
+        <td>${p.fire}</td>
+        <td>${p.total}</td>
+        <td>${new Date(p.updatedAt).toLocaleTimeString()}</td>
+      </tr>
+    `).join('')
+
+    wrap.innerHTML = `
+      <table>
+        <thead>
+          <tr><th>player</th><th>ice</th><th>fire</th><th>total</th><th>last update</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `
+  }
+
+  // ----------------------------------------------
+  // WEBSOCKET
+  // ----------------------------------------------
+
+  let socket = null
+
+  const setStatus = (text, connected) => {
+    statusEl.textContent = text
+    statusEl.className = connected ? 'connected' : ''
+  }
+
+  const handleState = (msg) => {
+    const players = msg.players || []
+    const now = Date.now()
+
+    players.forEach((p) => {
+      if (!history.has(p.name)) history.set(p.name, [])
+      const arr = history.get(p.name)
+      arr.push({t: now, total: p.total})
+      if (arr.length > 200) arr.shift()
+    })
+
+    renderBarChart(players)
+    renderLineChart(players)
+    renderTable(players)
+  }
+
+  const connect = () => {
+    const relayUrl = relayInput.value.trim()
+    const room = roomInput.value.trim() || 'quantum1'
+
+    if (!relayUrl) {
+      setStatus('enter a relay URL first', false)
+      return
+    }
+
+    localStorage.setItem('dashboard-relay-url', relayUrl)
+    localStorage.setItem('dashboard-room', room)
+
+    if (socket) socket.close()
+
+    setStatus('connecting…', false)
+
+    const url =
+      `${relayUrl.replace(/\/$/, '')}/ws?room=${encodeURIComponent(room)}` +
+      `&name=dashboard&role=viewer`
+
+    socket = new WebSocket(url)
+
+    socket.addEventListener('open', () => setStatus(`connected · room "${room}"`, true))
+    socket.addEventListener('close', () => setStatus('disconnected', false))
+    socket.addEventListener('error', () => setStatus('connection error', false))
+
+    socket.addEventListener('message', (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        if (msg.type === 'state') handleState(msg)
+      } catch (e) {
+        console.error('bad message', e)
+      }
+    })
+  }
+
+  connectBtn.addEventListener('click', connect)
+
+  if (relayInput.value) connect()
+})()
+</script>
+
+</body>
+</html>
